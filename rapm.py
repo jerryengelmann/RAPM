@@ -1,10 +1,28 @@
 from sklearn import linear_model
 import numpy as np
 from scipy.sparse import lil_matrix, csr_matrix
+import api_helper
+
+def run_bayes_model(X, y):
+	import pymc as pm
+	basic_model = pm.Model()
+	with basic_model:
+		alpha = pm.Normal("alpha", mu = 1.1, sigma = 0.1)
+		beta = pm.Normal("beta", 0, 0.02, shape=(np.shape(X)[1],))#standard deviation needs to be supplied and isn't always immediately obvious
+		mu = alpha + pm.math.dot(X, beta)
+		Y_obs = pm.Normal("Y_obs", mu = mu, observed = y)
+		idata = pm.find_MAP()
+	return idata['beta']
+
+def run_ridge_model(X, y, sample_weights):
+	clf = linear_model.RidgeCV(alphas = [1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000], cv = 4)#Other options are RidgeCV ElasticNetCV, Lasso etc, all with different penalization parameters
+	clf.fit(X, y, sample_weight = sample_weights)
+	print ('ALPHA:', clf.alpha_)
+	return clf.coef_
 
 def main():
 	#cur = MySQLdb.connect()
-	cur.execute("select home_poss, pts, a1, a2, a3, a4, a5, h1, h2, h3, h4, h5, season from matchups")
+	cur.execute("select home_poss, pts, a1, a2, a3, a4, a5, h1, h2, h3, h4, h5, season from matchups where season = 2024")
 	data = cur.fetchall()
 
 	all_players = {}#get all players in the dataset
@@ -24,7 +42,7 @@ def main():
 	X = lil_matrix((len(data), len(col_to_player)))#use sparse matrixes so memory doesn't blow up
 	y = np.zeros(len(data))
 	sample_weights = []
-	season_weights = {2024: 1.0, 2023: 1.0, 2022: 1.0}#etc.
+	season_weights = {2024: 1.0, 2023: 0.9, 2022: 0.8}#etc.
 	counter = 0
 	for item in data:
 		home_poss = item[0]
@@ -48,13 +66,13 @@ def main():
 		y[counter] = pts
 		sample_weights.append(season_weights[season])
 		counter += 1
+	y_av = np.average(y)
+	
+	beta_ridge = run_ridge_model(X.tocsr(), y - y_av, sample_weights)
+	beta_bm = run_bayes_model(X.todense(), y)#Bayesian model
 
-	y -= np.average(y)
-	X = X.tocsr()#faster than lil_matrix for computation
-	clf = linear_model.Ridge(alpha = 3000)#Other options are RidgeCV ElasticNetCV, Lasso etc, all with different penalization parameters
-	clf.fit(X, y, sample_weight = sample_weights)
-	for i in range(0, len(clf.coef_)):
-		print (col_to_player[i], ';', clf.coef_[i])
+	for i in range(0, len(beta_ridge)):
+		print (col_to_player[i], ';', beta_ridge[i], ';', beta_bm[i])
 
 if __name__=='__main__':
 	main()
